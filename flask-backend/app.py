@@ -6,6 +6,9 @@ from azure.storage.blob import BlobServiceClient
 import io
 from apscheduler.schedulers.background import BackgroundScheduler
 import re
+from picamera2 import Picamera2
+import numpy as np
+
 app = Flask(__name__)
 
 # Azure Storage Configuration
@@ -33,33 +36,38 @@ def upload_to_azure(file_stream, blob_name):
 
 # Function to capture an image and upload it to Azure
 def capture_image(plant_id):
-    """Captures an image from the camera, stores it locally, and uploads it to Azure."""
-    camera = cv2.VideoCapture(1)
-    ret, frame = camera.read()
-    camera.release()
+    """Captures image using Raspberry Pi Camera, saves locally, uploads to Azure, and replaces existing one."""
+    try:
+        # Initialize camera
+        picam2 = Picamera2()
+        picam2.configure(picam2.create_still_configuration())
+        picam2.start()
+        frame = picam2.capture_array()
+        picam2.stop()
 
-    if ret:
+        # Generate filenames
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         image_filename = f"plant_{plant_id}_{timestamp}.jpg"
-        
-        # Delete the previous image for the plant if it exists
-        existing_image_path = os.path.join(LOCAL_IMAGE_FOLDER, f"plant_{plant_id}.jpg")
-        if os.path.exists(existing_image_path):
-            os.remove(existing_image_path)
-        
-        # Save the new image locally
-        local_image_path = os.path.join(LOCAL_IMAGE_FOLDER, f"plant_{plant_id}.jpg")
+        local_display_filename = f"plant_{plant_id}.jpg"
+        local_image_path = os.path.join(LOCAL_IMAGE_FOLDER, local_display_filename)
+
+        # Delete previous local display image
+        if os.path.exists(local_image_path):
+            os.remove(local_image_path)
+
+        # Save new image locally (for display)
         cv2.imwrite(local_image_path, frame)
-        
-        # Convert the frame to in-memory binary data
-        with open(local_image_path, 'rb') as f:
-            image_stream = io.BytesIO(f.read())
 
         # Upload to Azure
+        with open(local_image_path, 'rb') as f:
+            image_stream = io.BytesIO(f.read())
         azure_url = upload_to_azure(image_stream, image_filename)
+
         return azure_url if azure_url else None
-    
-    return None
+
+    except Exception as e:
+        print(f"Camera capture failed: {e}")
+        return None
 
 # Function to automatically capture images for Plant 1 every minute
 def capture_image_automatically():
