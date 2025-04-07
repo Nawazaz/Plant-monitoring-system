@@ -6,6 +6,7 @@ from azure.storage.blob import BlobServiceClient
 import io
 from apscheduler.schedulers.background import BackgroundScheduler
 import re
+
 app = Flask(__name__)
 
 # Azure Storage Configuration
@@ -62,19 +63,34 @@ def capture_image(plant_id):
     return None
 
 # Function to automatically capture images for Plant 1 every minute
+job_running = False
+
 def capture_image_automatically():
     """Captures image for Plant 1 every minute automatically."""
-    print("Automatically capturing image for Plant 1")
-    capture_image(1)
+    global job_running
+    if not job_running:  # Ensure the job isn't already running
+        job_running = True
+        print("Automatically capturing image for Plant 1")
+        capture_image(1)
+        job_running = False
+    else:
+        print("Job already running, skipping this cycle.")
 
 # Initialize the scheduler
 scheduler = BackgroundScheduler()
 
 # Add job to the scheduler to capture image for Plant 1 every minute
-scheduler.add_job(func=capture_image_automatically, trigger="interval", minutes=1)
+def schedule_image_capture():
+    """Schedules the image capture every minute."""
+    for job in scheduler.get_jobs():
+        job.remove()  # Remove any existing jobs to prevent duplicates
+    
+    scheduler.add_job(func=capture_image_automatically, trigger="interval", minutes=1)
 
-# Start the scheduler
-scheduler.start()
+# Start the scheduler (if it's not already running)
+if not scheduler.running:
+    schedule_image_capture()
+    scheduler.start()
 
 @app.route('/')
 def home():
@@ -132,4 +148,5 @@ def serve_image(filename):
     return send_from_directory(LOCAL_IMAGE_FOLDER, filename)
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    # Disable Flask's automatic reloading to prevent the scheduler from being duplicated
+    app.run(debug=True, use_reloader=False)
