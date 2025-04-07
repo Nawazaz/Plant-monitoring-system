@@ -35,7 +35,7 @@ def upload_to_azure(file_stream, blob_name):
 # Function to capture an image and upload it to Azure
 def capture_image(plant_id):
     """Captures an image from the camera, stores it locally, and uploads it to Azure."""
-    camera = cv2.VideoCapture(1)
+    camera = cv2.VideoCapture(0)  # Change to 0 (default camera) if you're using a USB camera
     ret, frame = camera.read()
     camera.release()
 
@@ -149,4 +149,4 @@ def serve_image(filename):
 
 if __name__ == '__main__':
     # Disable Flask's automatic reloading to prevent the scheduler from being duplicated
-    app.run(debug=True, use_reloader=False)
+    app.run(host='0.0.0.0', port=5000, debug=True, use_reloader=False)
