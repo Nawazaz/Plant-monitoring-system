@@ -6,6 +6,7 @@ from azure.storage.blob import BlobServiceClient
 import io
 from apscheduler.schedulers.background import BackgroundScheduler
 import re
+import time  # Make sure this is at the top of your file
 
 app = Flask(__name__)
 
@@ -35,7 +36,18 @@ def upload_to_azure(file_stream, blob_name):
 # Function to capture an image and upload it to Azure
 def capture_image(plant_id):
     """Captures an image from the camera, stores it locally, and uploads it to Azure."""
-    camera = cv2.VideoCapture(0)  # Change to 0 (default camera) if you're using a USB camera
+    camera = cv2.VideoCapture(0)
+
+    if not camera.isOpened():
+        print("Error: Could not open camera.")
+        return None
+
+    # Warm up the camera — read and discard a few frames
+    for _ in range(5):
+        ret, frame = camera.read()
+        time.sleep(0.1)  # Small delay between frames
+
+    # Final capture
     ret, frame = camera.read()
     camera.release()
 
@@ -43,23 +55,20 @@ def capture_image(plant_id):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         image_filename = f"plant_{plant_id}_{timestamp}.jpg"
         
-        # Delete the previous image for the plant if it exists
         existing_image_path = os.path.join(LOCAL_IMAGE_FOLDER, f"plant_{plant_id}.jpg")
         if os.path.exists(existing_image_path):
             os.remove(existing_image_path)
         
-        # Save the new image locally
         local_image_path = os.path.join(LOCAL_IMAGE_FOLDER, f"plant_{plant_id}.jpg")
         cv2.imwrite(local_image_path, frame)
         
-        # Convert the frame to in-memory binary data
         with open(local_image_path, 'rb') as f:
             image_stream = io.BytesIO(f.read())
 
-        # Upload to Azure
         azure_url = upload_to_azure(image_stream, image_filename)
         return azure_url if azure_url else None
     
+    print("Error: Failed to capture image.")
     return None
 
 # Function to automatically capture images for Plant 1 every minute
