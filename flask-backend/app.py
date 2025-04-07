@@ -1,13 +1,13 @@
 import os
-import cv2
-from flask import Flask, jsonify, render_template, request, send_from_directory
+import io
+from flask import Flask, jsonify, render_template, send_from_directory
 from datetime import datetime
 from azure.storage.blob import BlobServiceClient
-import io
-from apscheduler.schedulers.background import BackgroundScheduler
+from picamera2 import Picamera2
 import re
-import picamera
+from apscheduler.schedulers.background import BackgroundScheduler
 import time
+
 app = Flask(__name__)
 
 # Azure Storage Configuration
@@ -22,6 +22,9 @@ container_client = blob_service_client.get_container_client(CONTAINER_NAME)
 LOCAL_IMAGE_FOLDER = 'temp_images'
 os.makedirs(LOCAL_IMAGE_FOLDER, exist_ok=True)
 
+# Initialize the PiCamera2 instance
+camera = Picamera2()
+
 # Function to upload image to Azure
 def upload_to_azure(file_stream, blob_name):
     """Uploads an in-memory file stream to Azure Blob Storage."""
@@ -33,40 +36,29 @@ def upload_to_azure(file_stream, blob_name):
         print(f"Azure Upload Error: {e}")
         return None
 
-# Function to capture an image and upload it to Azure
+# Function to capture an image from the Pi Camera and upload to Azure
 def capture_image(plant_id):
-    """Captures an image from the Pi camera, stores it locally, and uploads it to Azure."""
-    try:
-        # Initialize the Pi camera
-        with picamera.PICamera() as camera:
-            camera.resolution = (1024, 768)  # Set the resolution (you can adjust as needed)
-            
-            # Give the camera a moment to adjust
-            time.sleep(2)
-            
-            # Create a timestamp for the filename
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            image_filename = f"plant_{plant_id}_{timestamp}.jpg"
-            
-            # Delete the previous image for the plant if it exists
-            existing_image_path = os.path.join(LOCAL_IMAGE_FOLDER, f"plant_{plant_id}.jpg")
-            if os.path.exists(existing_image_path):
-                os.remove(existing_image_path)
-            
-            # Save the captured image locally
-            local_image_path = os.path.join(LOCAL_IMAGE_FOLDER, f"plant_{plant_id}.jpg")
-            camera.capture(local_image_path)
-            
-            # Convert the frame to in-memory binary data
-            with open(local_image_path, 'rb') as f:
-                image_stream = io.BytesIO(f.read())
+    """Captures an image from the Raspberry Pi camera, stores it locally, and uploads it to Azure."""
+    # Set camera parameters (you can adjust resolution here)
+    camera.resolution = (640, 480)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    image_filename = f"plant_{plant_id}_{timestamp}.jpg"
+    
+    # Capture the image from the camera
+    captured_image_path = os.path.join(LOCAL_IMAGE_FOLDER, f"plant_{plant_id}.jpg")
+    camera.start()
+    time.sleep(2)  # Allow time for the camera to adjust
+    camera.capture_file(captured_image_path)
+    camera.stop()
 
-            # Upload to Azure
-            azure_url = upload_to_azure(image_stream, image_filename)
-            return azure_url if azure_url else None
-    except Exception as e:
-        print(f"Error capturing image: {e}")
-        return None
+    # Convert the image to in-memory binary data
+    with open(captured_image_path, 'rb') as f:
+        image_stream = io.BytesIO(f.read())
+
+    # Upload the image to Azure
+    azure_url = upload_to_azure(image_stream, image_filename)
+    return azure_url if azure_url else None
+
 # Function to automatically capture images for Plant 1 every minute
 def capture_image_automatically():
     """Captures image for Plant 1 every minute automatically."""
