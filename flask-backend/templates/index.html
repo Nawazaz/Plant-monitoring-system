@@ -258,8 +258,9 @@
 
             <!-- Temperature -->
             <div class="card">
-                <div class="section-title">Temperature</div>
+                <div class="section-title">Temperature & Humidity</div>
                 <div class="sensor-value" id="temperature">--°C</div>
+                <div class="sensor-value" id="humidity">--%</div>
                 <div class="graph" id="temperature-graph">
                     <div class="graph-header">Temperature (Last Hour)</div>
                 </div>
@@ -322,6 +323,31 @@
                 console.error('Error capturing image:', error);
             });
         }
+        function updateTemperatureAndHumidity() {
+            fetch('/sensor/temperature')
+                .then(res => res.json())
+                .then(data => {
+                    if (data.temperature !== null) {
+                        document.getElementById('temperature').innerText = `${data.temperature}°C`;
+                    } else {
+                        document.getElementById('temperature').innerText = `--°C`;
+                    }
+
+                    if (data.humidity !== null) {
+                        document.getElementById('humidity').innerText = `${data.humidity}%`;
+                    } else {
+                        document.getElementById('humidity').innerText = `--%`;
+                    }
+                })
+                .catch(err => {
+                    console.error("Failed to fetch temperature:", err);
+                });
+        }
+
+        // Refresh temperature and humidity every 5 seconds
+        setInterval(updateTemperatureAndHumidity, 5000);
+        updateTemperatureAndHumidity();
+
     </script>
 </body>
 </html>
