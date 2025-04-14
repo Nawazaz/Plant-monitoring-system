@@ -8,12 +8,6 @@ import io
 from apscheduler.schedulers.background import BackgroundScheduler
 import re
 import time
-import adafruit_dht
-import board
-import threading
-
-# Initialize DHT22 sensor on GPIO 4
-dht_sensor = adafruit_dht.DHT22(board.D4)
 
 app = Flask(__name__)
 
@@ -26,31 +20,60 @@ blob_service_client = BlobServiceClient.from_connection_string(AZURE_STORAGE_CON
 container_client = blob_service_client.get_container_client(CONTAINER_NAME)
 
 # Azure Table Client Initialization via full SAS URL
-TABLE_SAS_URL = "https://planthkr.table.core.windows.net/Temp?sp=raud&st=2025-04-07T15:22:18Z&se=2025-04-08T15:22:18Z&sv=2024-11-04&sig=fsfvAlWmXChJ4ibHv6g%2FJbD0SShsIN92teHZrdJBWoE%3D&tn=Temp"
+TABLE_SAS_URL = "https://planthkr.table.core.windows.net/Temp?sp=raud&st=2025-04-14T10:46:25Z&se=2025-04-15T10:46:25Z&sv=2024-11-04&sig=wOz9sK%2F4qufgkmR7BNkHiwRaWrAA%2BHk%2FYtLA2HLpmrg%3D&tn=Temp"
 table_client = TableClient.from_table_url(TABLE_SAS_URL)
 
 # Local temp folder
 LOCAL_IMAGE_FOLDER = 'temp_images'
 os.makedirs(LOCAL_IMAGE_FOLDER, exist_ok=True)
 
-def get_temperature_and_humidity():
-    try:
-        temperature_c = dht_sensor.temperature
-        humidity = dht_sensor.humidity
 
-        if temperature_c is not None and humidity is not None:
-            return {
-                "temperature": round(temperature_c, 1),
-                "humidity": round(humidity, 1)
-            }
-        else:
-            print("DHT sensor read failed: Received None value(s)")
+# Track the last time data was fetched
+last_fetched_time = None
+latest_temperature_data = {"temperature": None, "humidity": None}
+
+def get_latest_temperature_from_azure():
+    global last_fetched_time, latest_temperature_data
+
+    try:
+        # Fetch data from Azure
+        entities = list(table_client.list_entities())
+        
+        if not entities:
             return {"temperature": None, "humidity": None}
 
-    except RuntimeError as e:
-        print(f"DHT sensor error: {e}")
-        return {"temperature": None, "humidity": None}
+        # Sort by RowKey (timestamp) descending to get the latest data
+        entities.sort(key=lambda e: e.get("RowKey", ""), reverse=True)
 
+        # Get the latest entry
+        latest = entities[0]
+
+        # Check if the RowKey (timestamp) is different from the last fetched timestamp
+        if last_fetched_time is None or latest.get("RowKey") != last_fetched_time:
+
+            # Extract temperature and humidity from the latest record
+            temperature = latest.get("Temperature")
+            humidity = latest.get("Humidity")
+
+            if temperature is None or humidity is None:
+                return {"temperature": None, "humidity": None}
+
+            # Update the timestamp of the last fetch
+            last_fetched_time = latest.get("RowKey")
+
+            # Update the latest fetched data
+            latest_temperature_data = {"temperature": temperature, "humidity": humidity}
+
+            # Return the new data
+            return latest_temperature_data
+        
+        # If no new data, return the previously fetched data without printing
+        return latest_temperature_data
+
+    except KeyError as e:
+        return {"temperature": None, "humidity": None}
+    except Exception as e:
+        return {"temperature": None, "humidity": None}
 
 def upload_to_azure(file_stream, blob_name):
     try:
@@ -60,6 +83,7 @@ def upload_to_azure(file_stream, blob_name):
     except Exception as e:
         print(f"Azure Upload Error: {e}")
         return None
+
 
 def capture_image(plant_id):
     camera = cv2.VideoCapture(0)
@@ -93,28 +117,6 @@ def capture_image(plant_id):
         print("Error: Failed to capture image.")
         return None
 
-# APScheduler-safe threaded version
-def log_temperature_and_humidity():
-    data = get_temperature_and_humidity()
-    timestamp = datetime.utcnow().isoformat()
-
-    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Temp: {data['temperature']}°C, Humidity: {data['humidity']}%")
-
-    if data["temperature"] is not None and data["humidity"] is not None:
-        try:
-            entity = {
-                "PartitionKey": "Enviroment",
-                "RowKey": timestamp,
-                "Temperature": data["temperature"],
-                "Humidity": data["humidity"]
-            }
-            table_client.create_entity(entity=entity)
-        except Exception as e:
-            print(f"Azure Table Insert Error: {e}")
-
-# Wrap in thread to prevent blocking
-def log_temperature_and_humidity_async():
-    threading.Thread(target=log_temperature_and_humidity).start()
 
 # Image auto-capture job
 job_running = False
@@ -128,6 +130,7 @@ def capture_image_automatically():
     else:
         print("Job already running, skipping this cycle.")
 
+
 # Scheduler setup
 scheduler = BackgroundScheduler()
 
@@ -136,21 +139,23 @@ def schedule_jobs():
         job.remove()
 
     scheduler.add_job(func=capture_image_automatically, trigger="interval", minutes=1, max_instances=2)
-    scheduler.add_job(func=log_temperature_and_humidity_async, trigger="interval", seconds=30, max_instances=3)
 
 if not scheduler.running:
     schedule_jobs()
     scheduler.start()
+
 
 # Flask routes
 @app.route('/')
 def home():
     return render_template('index.html')
 
+
 @app.route('/sensor/temperature')
 def get_temperature():
-    data = get_temperature_and_humidity()
+    data = get_latest_temperature_from_azure()
     return jsonify(data)
+
 
 @app.route('/capture/<int:plant_id>', methods=['POST'])
 def capture(plant_id):
@@ -158,6 +163,7 @@ def capture(plant_id):
     if image_url:
         return jsonify({"status": "success", "image_url": image_url})
     return jsonify({"status": "error", "message": "Failed to capture image"})
+
 
 @app.route('/analytics')
 def analytics():
@@ -186,9 +192,11 @@ def analytics():
 
     return render_template('analytics.html', plant_images=plant_images)
 
+
 @app.route('/temp_images/<filename>')
 def serve_image(filename):
     return send_from_directory(LOCAL_IMAGE_FOLDER, filename)
 
+
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5010, debug=True, use_reloader=False)
+    app.run(host='0.0.0.0', port=5030, debug=True, use_reloader=False)
