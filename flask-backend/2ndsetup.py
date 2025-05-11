@@ -7,25 +7,19 @@ import time
 import serial
 import datetime
 
-# === Flask App ===
 app = Flask(__name__)
 
-# === Configurations ===
-# Pi1 upload URL
 PI1_UPLOAD_URL = "http://192.168.0.161:5071/upload_image/2"
 
-# Azure Table URL and Headers
-AZURE_TABLE_URL = "https://planthkr.table.core.windows.net/moisture?sp=raud&st=2025-04-27T08:03:48Z&se=2025-05-31T08:03:00Z&sv=2024-11-04&sig=pKpXkLnpgx4JJXiq%2FtzGD47fbh6Ixo1MKgh8Ea1AEdg%3D&tn=moisture"
+AZURE_TABLE_URL = ""
 HEADERS = {
     "Accept": "application/json;odata=nometadata",
     "Content-Type": "application/json"
 }
 
-# Serial setup (Arduino moisture sensor)
 ser = serial.Serial('/dev/ttyACM0', 9600, timeout=1)
 time.sleep(2)
 
-# === Functions ===
 def capture_and_upload():
     """Capture a picture and upload to Pi 1."""
     cam = cv2.VideoCapture(0)
@@ -80,7 +74,6 @@ def send_moisture_data():
                 "Status": status
             }
 
-            # Send to Azure Table
             try:
                 response = requests.post(AZURE_TABLE_URL, headers=HEADERS, json=data)
                 if response.status_code in [200, 201, 204]:
@@ -107,9 +100,6 @@ def capture_and_send_on_demand():
     capture_and_upload()
     return jsonify({"status": "success"})
 
-# === Main ===
 if __name__ == '__main__':
-    # Start background thread
     threading.Thread(target=background_tasks, daemon=True).start()
-    # Start Flask server
     app.run(host='0.0.0.0', port=5073)
